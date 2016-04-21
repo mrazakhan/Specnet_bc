@@ -16,22 +16,6 @@ class MMFreq:
 		self.filter_dates=filter_dates		
 
 
-	def processGhanaDate(self):
-		# We are going to be processing the ADate field 20140514			
-
-		self.sf['str_date']=self.sf[self.header[self.dateIndex]].apply(lambda x:str(x).split(' ')[0]) # Getting the date only
-		print 'Shape before filtering the dates', self.sf.shape
-		self.sf=self.sf[self.sf['str_date'].apply(lambda x:(x<=self.end_date and x>=self.start_date))]
-		print 'Shape after filtering the dates', self.sf.shape
-
-		self.sf[self.sf.column_names()[self.dateIndex]]=self.sf[self.sf.column_names()[self.dateIndex]].apply(lambda x:str(x)[:6])
-
-	def processZambiaDate(self):
-		self.sf['str_date']=self.sf[self.header[self.dateIndex]].apply(lambda x:str(x).split(' ')[0]) # Getting the date only
-		print 'Shape before filtering the dates', self.sf.shape
-		self.sf=self.sf[self.sf['str_date'].apply(lambda x:(x<=self.end_date and x>=self.start_date))]
-		print 'Shape after filtering the dates', self.sf.shape
-		self.sf[self.sf.column_names()[self.dateIndex]]=self.sf[self.sf['str_date']].apply(lambda x:str(x)[:7])
 
 	def processPakistanDate(self,filter_dates):
 		self.sf['str_date']=self.sf[self.header[self.dateIndex]].apply(lambda x:str(x).split(' ')[0]) # Getting the date only
@@ -49,15 +33,10 @@ class MMFreq:
 		to_keep_cols=[header[i] for i in range(len(header)) if i in to_keep_inds]
 		self.sf=self.sf[to_keep_cols]
 		
-		if self.cdrType=='Ghana':
-			self.processGhanaDate()
-		elif self.cdrType=='Zambia' :
-			self.processZambiaDate()
-		elif self.cdrType=='Pakistan':
+		if self.cdrType=='Pakistan':
 			self.sf=self.processPakistanDate(self.filter_dates)
 		print self.sf.head()
-		self.sf.export_csv('TempMMFreq.csv')
-		self.sf=self.sf.groupby(key_columns=header[self.userIdIndex],operations={'NoOfMonths':gl.aggregate.COUNT_DISTINCT(header[self.dateIndex])})
+		self.sf=self.sf.groupby(key_columns=header[self.userIdIndex],operations={'NoOfMonths':gl.aggregate.COUNT_DISTINCT('str_date')})
 
 		print 'Shape of SFrame before removing non subscriber ids', self.sf.shape
 		self.sf=self.sf[self.sf[header[self.userIdIndex]].apply(lambda x:str(x).isdigit())]
