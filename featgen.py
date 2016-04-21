@@ -1,0 +1,102 @@
+import argparse
+import graphlab as gl
+import csv
+import math
+from graphlab import feature_engineering as fe
+DEBUG=1
+
+def preprocess(clusteral_features, ground_truth, output_file, clusteral_key_col, labels_key_col, labels_value_col, interaction=0):
+	lf=gl.SFrame.read_csv(ground_truth)[[labels_key_col,labels_value_col]]
+	print 'Shape of the labels file is ', lf.shape
+	cf=gl.SFrame.read_csv(clusteral_features).rename({clusteral_key_col:labels_key_col})
+	print 'Shape of the Clusteral file is ', cf.shape
+	
+	merged_sf=lf.join(cf , on=labels_key_col, how='inner')
+	print 'Shape of the merged file is ', merged_sf.shape
+	
+	interaction_columns=[each for each in cf.column_names() if labels_key_col not in each]
+	if DEBUG:
+		print 'Interaction.column_names()'
+		print interaction_columns
+	if interaction:
+		quad = fe.create(merged_sf, fe.QuadraticFeatures(features=interaction_columns))	
+		print 'Applying Quadratic Transformation'
+		merged_sf=quad.transform(merged_sf)
+		#print 'Flattening the quadratic features'
+		#merged_sf=merged_sf.unpack('quadratic_features')
+	
+	return merged_sf
+
+def eval_model(model, test, col):
+	'''Evaluate a trained model using Kaggle scoring.'''
+	return log_loss_raw(test[col], model.predict(test, output_type='probability'))
+	
+def log_loss_raw(target, predicted):
+	'''Calculate log_loss between target and predicted and return.'''
+	p = predicted.apply(lambda x: min(0.99999, max(1e-5, x)))
+	logp = p.apply(lambda x: math.log(x))
+	logmp = p.apply(lambda x: (math.log(1-x)))
+	return -(target * logp + (1-target) * logmp).mean()
+
+
+if __name__=='__main__':
+	parser=argparse.ArgumentParser(description='Spectral Features Preprocessing')
+	parser.add_argument('-cf','--clusteral_features',help='Input File containing clusteral features', required=True)
+	parser.add_argument('-lf','--labels_file', help='Ground Truth labels file', required=True)
+	parser.add_argument('-of','--output_file', help='Output file', required=True)
+	parser.add_argument('-cfk','--clusteral_key_column', required=True)
+	parser.add_argument('-lfk','--labels_key_column', required=True)
+	parser.add_argument('-lfv','--labels_value_column', required=True)
+	parser.add_argument('-i','--interaction', required=True)
+
+	gl.set_runtime_config('GRAPHLAB_CACHE_FILE_LOCATIONS','/home/mraza/tmp/')	
+	args=parser.parse_args()
+	interaction=int(args.interaction)
+	quad_df=preprocess(clusteral_features=args.clusteral_features, \
+		ground_truth=args.labels_file,\
+		output_file=args.output_file,\
+		clusteral_key_col=args.clusteral_key_column, \
+		labels_key_col=args.labels_key_column,\
+		labels_value_col=args.labels_value_column, interaction=interaction)
+
+	print '****************Balanced Sample*****************'
+	train, val = quad_df.random_split(0.75, seed=12345)
+	train_features=[each for each in quad_df.column_names() \
+		if args.labels_key_column not in each and args.clusteral_key_column not in each and args.labels_value_column not in each]
+	model = gl.logistic_classifier.create(train, features=train_features, target=args.labels_value_column,\
+		 validation_set=val, max_iterations=5)
+	print "LL %0.20f" % eval_model(model, val, col=args.labels_value_column)
+	results = model.evaluate(val)
+	print 'Accuracy', results['accuracy']
+	print 'Class Percentages in the validation data', val[args.labels_value_column].sketch_summary()
+	print 'Class Percentages in the training data', train[args.labels_value_column].sketch_summary()
+
+	print '****************Balanced Sample*****************'
+	train, val = quad_df.random_split(0.75, seed=12345)
+	quad_df_class1=quad_df.filter_by(1,args.labels_value_column)
+	quad_df_class0=quad_df.filter_by(0,args.labels_value_column)
+
+	# Random split for the bigger sf
+	quad_df_class1,temp=quad_df_class1.random_split(quad_df_class0.shape[0]/float(quad_df_class1.shape[0]))
+	
+	print 'Shape of the class1 df for the balanced sample is', quad_df_class1.shape
+	print 'Shape of the class0 df for the balanced sample is', quad_df_class0.shape
+
+	quad_df=quad_df_class1.append(quad_df_class0)
+	
+	train, val = quad_df.random_split(0.75, seed=12345)
+
+	train_features=[each for each in quad_df.column_names() \
+		if args.labels_key_column not in each and args.clusteral_key_column not in each and args.labels_value_column not in each]
+	model = gl.logistic_classifier.create(train, features=train_features, target=args.labels_value_column,\
+		 validation_set=val, max_iterations=5)
+	print "LL %0.20f" % eval_model(model, val, col=args.labels_value_column)
+	results = model.evaluate(val)
+	print 'Accuracy', results['accuracy']
+	print 'Class Percentages in the validation data', val[args.labels_value_column].sketch_summary()
+	print 'Class Percentages in the training data', train[args.labels_value_column].sketch_summary()
+
+	
+	if interaction:
+		print 'Saving the quadratic features file'
+		quad_df.export_csv(args.output_file, quote_level=csv.QUOTE_NONE)
