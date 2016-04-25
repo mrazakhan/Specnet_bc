@@ -32,7 +32,7 @@ def preprocess(clusteral_features, ground_truth, output_file, clusteral_key_col,
 
 	print merged_sf[labels_value_col].sketch_summary()
 
-	interaction_columns=[each for each in cf.column_names() if labels_key_col not in each and clusteral_key_col not in each]
+	interaction_columns=[each for each in cf.column_names() if labels_key_col not in each and clusteral_key_col not in each and labels_value_col not in each]
 	if DEBUG:
 		print 'Interaction.column_names()'
 		print interaction_columns
@@ -57,6 +57,17 @@ def log_loss_raw(target, predicted):
 	logmp = p.apply(lambda x: (math.log(1-x)))
 	return -(target * logp + (1-target) * logmp).mean()
 
+def twoclass_stratified_sampling(sf, col, fraction, values=[0,1]):
+	sf_a=sf.filter_by(values[0], col) 
+	sf_b=sf.filter_by(values[1], col) 
+	print 'Shape of Class 1 and Class 2 Sframes is {}, {}'.format(sf_a.shape,sf_b.shape)
+	sf_a,temp=sf_a.random_split(seed=12345, fraction=fraction)
+	sf_b,temp=sf_b.random_split(seed=12345, fraction=fraction)
+
+	print 'Shape of Class 1 and Class 2 Sframes after sampling is {}, {}'.format(sf_a.shape,sf_b.shape)
+	sf_a,temp=sf_a.random_split(seed=12345, fraction=fraction)
+	
+	return sf_a.append(sf_b)
 
 if __name__=='__main__':
 	gl.set_runtime_config('GRAPHLAB_CACHE_FILE_LOCATIONS','/home/mraza/tmp/')	
@@ -73,6 +84,7 @@ if __name__=='__main__':
 	parser.add_argument('-i','--interaction', required=True)
 	parser.add_argument('-j','--join_type', required=False)
 	parser.add_argument('-e','--encode', required=False)
+	parser.add_argument('-ex','--exclude', required=False)
 
 	args=parser.parse_args()
 	
@@ -88,17 +100,21 @@ if __name__=='__main__':
 	print args
 
 	interaction=int(args.interaction)
+	
 	quad_df=preprocess(clusteral_features=args.clusteral_features, \
 		ground_truth=args.labels_file,\
 		output_file=args.output_file,\
 		clusteral_key_col=args.clusteral_key_column, \
 		labels_key_col=args.labels_key_column,\
 		labels_value_col=args.labels_value_column, interaction=interaction, join_type=join_type, encode=encode)
-
+	
+	quad_df=gl.SFrame.read_csv(args.clusteral_features)
+	#quad_df=twoclass_stratified_sampling(quad_df, col=args.labels_value_column, fraction=0.3)
+	#quad_df=quad_df[[ for each in quad_df.column_names()]]
 	print '****************Unbalanced Sample*****************'
 	train, val = quad_df.random_split(0.75, seed=12345)
 	train_features=[each for each in quad_df.column_names() \
-		if args.labels_key_column not in each and args.clusteral_key_column not in each and args.labels_value_column not in each]
+		if args.labels_key_column not in each and args.exclude not in each and args.clusteral_key_column not in each and args.labels_value_column not in each]
 	model = gl.logistic_classifier.create(train, features=train_features, target=args.labels_value_column,\
 		 validation_set=val, max_iterations=5)
 	print "LL %0.20f" % eval_model(model, val, col=args.labels_value_column)
@@ -113,16 +129,18 @@ if __name__=='__main__':
 	quad_df_class0=quad_df.filter_by(0,args.labels_value_column)
 
 	# Random split for the bigger sf
-	if quad_df_class0.shape[0]>quad_df_class1.shape[0]:
-		quad_df_class0,temp=quad_df_class0.random_split(quad_df_class0.shape[0]/float(quad_df_class1.shape[0]))
-		quad_df=quad_df_class1.append(quad_df_class0)
-	else:
+	if quad_df_class0.shape[0]<quad_df_class1.shape[0]:
+		print 'Case 1, Class1 {} Class 2 {}'.format(quad_df_class0.shape[0], quad_df_class1.shape[0])
 		quad_df_class1,temp=quad_df_class1.random_split(quad_df_class0.shape[0]/float(quad_df_class1.shape[0]))
 		quad_df=quad_df_class1.append(quad_df_class0)
+	else:
+		print 'Case 2, Class1 {} Class 2 {}'.format(quad_df_class0.shape[0], quad_df_class1.shape[0])
+		quad_df_class0,temp=quad_df_class0.random_split(quad_df_class1.shape[0]/float(quad_df_class0.shape[0]))
+		quad_df=quad_df_class0.append(quad_df_class1)
 	
 	print 'Shape of the class1 df for the balanced sample is', quad_df_class1.shape
 	print 'Shape of the class0 df for the balanced sample is', quad_df_class0.shape
-
+	print 'Shape of the merged quad df is ', quad_df.shape
 	
 	train, val = quad_df.random_split(0.75, seed=12345)
 
@@ -133,8 +151,8 @@ if __name__=='__main__':
 	print "LL %0.20f" % eval_model(model, val, col=args.labels_value_column)
 	results = model.evaluate(val)
 	print 'Accuracy', results['accuracy']
-	print 'Class Percentages in the validation data', val[args.labels_value_column].sketch_summary()
-	print 'Class Percentages in the training data', train[args.labels_value_column].sketch_summary()
+	#print 'Class Percentages in the validation data', val[args.labels_value_column].sketch_summary()
+	#print 'Class Percentages in the training data', train[args.labels_value_column].sketch_summary()
 
 	
 	if interaction:

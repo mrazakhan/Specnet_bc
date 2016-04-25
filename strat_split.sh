@@ -1,0 +1,3 @@
+#python stratified_sample.py spectralFeature_CDR_raw_nofilt_10_full_apr22.csv MobileMoneyStatus.csv ActiveMMStatus
+python stratified_sample.py spectralFeature_CDR_raw_nofilt_10_full_apr22.csv UserDemographics.csv gend
+
