@@ -154,7 +154,7 @@ if __name__=='__main__':
 	train_features=[each for each in quad_df.column_names() \
 		if args.labels_key_column not in each and args.exclude not in each and args.clusteral_key_column not in each and args.labels_value_column not in each]
 	model = gl.logistic_classifier.create(train, features=train_features, target=args.labels_value_column,\
-		 l1_penalty=0.01,validation_set=val, max_iterations=40)#,metric='auc')
+		 l2_penalty=0.01,validation_set=val, max_iterations=40)#,metric='auc')
 	#model = gl.boosted_trees_classifier.create(train, features=train_features, target=args.labels_value_column,\
 	#	 validation_set=val, metric='auc')
 	print "LL %0.20f" % log_loss(model, val, col=args.labels_value_column)
@@ -194,7 +194,7 @@ if __name__=='__main__':
 	#model = gl.boosted_trees_classifier.create(train, features=train_features, target=args.labels_value_column,\
 	#	 validation_set=val, metric='auc')
 	model = gl.logistic_classifier.create(train, features=train_features, target=args.labels_value_column,\
-		l1_penalty=0.01, validation_set=val, max_iterations=40)
+		l2_penalty=0.01, validation_set=val, max_iterations=40)
 	print "LL %0.20f" % log_loss(model, val, col=args.labels_value_column)
 	print "AUC %0.20f" % get_auc(model, val, col=args.labels_value_column)
 	roc_curve = model.evaluate(val, metric='roc_curve')

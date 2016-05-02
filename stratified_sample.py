@@ -23,5 +23,5 @@ if __name__=='__main__':
 
 	mf=gl.SFrame.read_csv(mm)[['orig_cid2',col]]
 	sf=sf.join(mf, on='orig_cid2')
-	sf2=twoclass_stratified_sampling(sf,col, fraction=0.3)
-	sf2.export_csv('sample_'+col+'_'+fn,quote_level=csv.QUOTE_NONE)
+	#sf=twoclass_stratified_sampling(sf,col, fraction=1)
+	sf.export_csv('sample_'+col+'_'+fn,quote_level=csv.QUOTE_NONE)
