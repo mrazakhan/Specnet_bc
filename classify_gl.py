@@ -1,3 +1,4 @@
+import numpy as np
 import argparse
 import graphlab as gl
 import csv
@@ -6,6 +7,7 @@ import math
 import numpy
 from graphlab import feature_engineering as fe
 from sklearn.metrics import roc_auc_score
+from sklearn.preprocessing import MinMaxScaler
 DEBUG=1
 
 class Util():
@@ -32,8 +34,9 @@ class Eval():
 		    left_side = cur_row['tpr']
 		    right_side = next_row['tpr']
 		    area += base * (left_side + right_side) / 2.0
-		print 'Custom AUCC = %.3f' % area
+		print 'Custom AUC = %.3f' % area
 		return area
+	
 	def get_auc(self,model, test, col):
 		try:
 			pred=model.predict(test, output_type='class')
@@ -94,7 +97,6 @@ class spectral_training():
 		clusteral_features=self.clusteral_features
 		clusteral_key_col=self.clusteral_key_col		
 
-
 		lf=gl.SFrame.read_csv(ground_truth)[[labels_key_col,labels_value_col]]
 		print 'Shape of the labels file is ', lf.shape
 		cf=gl.SFrame.read_csv(clusteral_features).rename({clusteral_key_col:labels_key_col})
@@ -105,15 +107,15 @@ class spectral_training():
 		for col in cf.column_names():
 			cf=cf.fillna(col,0)
 		
-		merged_sf=lf.join(cf , on=labels_key_col, how=join_type).fillna(labels_value_col,0)
-		print 'Shape of the merged file is ', merged_sf.shape
-		print merged_sf[labels_value_col].sketch_summary()
+		self.merged_sf=lf.join(cf , on=labels_key_col, how=join_type).fillna(labels_value_col,0)
+		print 'Shape of the merged file is ', self.merged_sf.shape
+		print self.merged_sf[labels_value_col].sketch_summary()
 		
 		if encode:
-			merged_sf[labels_value_col]=merged_sf[labels_value_col].apply(lambda x:bin_encode(x))
-			merged_sf[labels_value_col].head(2)
+			self.merged_sf[labels_value_col]=self.merged_sf[labels_value_col].apply(lambda x:self.util.bin_encode(x))
+			self.merged_sf[labels_value_col].head(2)
 
-		print merged_sf[labels_value_col].sketch_summary()
+		print self.merged_sf[labels_value_col].sketch_summary()
 
 		interaction_columns=[each for each in cf.column_names() if labels_key_col not in each and clusteral_key_col not in each and labels_value_col not in each]
 		if DEBUG:
@@ -121,13 +123,14 @@ class spectral_training():
 			print interaction_columns
 			#sys.exit(0)
 		if interaction:
-			quad = fe.create(merged_sf, fe.QuadraticFeatures(features=interaction_columns))	
+			quad = fe.create(self.merged_sf, fe.QuadraticFeatures(features=interaction_columns))	
 			print 'Applying Quadratic Transformation'
-			merged_sf=quad.transform(merged_sf)
+			self.merged_sf=quad.transform(self.merged_sf)
+			self.merged_sf.__materialize__()
 			#print 'Flattening the quadratic features'
 			#merged_sf=merged_sf.unpack('quadratic_features')
-		
-		self.merged_sf=merged_sf
+		print 'Preprocessing complete'
+		#self.merged_sf=merged_sf
 
 
 	def twoclass_stratified_sampling(self,sf, col, fraction, values=[0,1]):
@@ -156,16 +159,25 @@ class spectral_training():
 			train=self.train_unbal
 			val=self.val_unbal
 		model = classifier.create(train, features=train_features, target=args.labels_value_column,\
-			l1_penalty=0.01,validation_set=val, max_iterations=3, convergence_threshold=0.001)#,metric='auc')
+			l2_penalty=10,validation_set=val, max_iterations=30, convergence_threshold=0.005)#,metric='auc')
 		#model = gl.boosted_trees_classifier.create(train, features=train_features, target=args.labels_value_column,\
 		#        validation_set=val, metric='auc')
 		print "LL %0.20f" % self.evaluator.log_loss(model, val, col=args.labels_value_column)
+		predictions=model.predict(val)
+		print 'Predictions' , predictions.sketch_summary()
+		if max(predictions)>1 or min(predictions)<0:
+			scaler=MinMaxScaler()
+			predictions=gl.SArray(scaler.fit_transform(predictions), float)
+		auc = gl.evaluation.auc(val[args.labels_value_column],predictions)
+		print "AUC %0.20f" %auc
+		'''
 		print "AUC %0.20f" % self.evaluator.get_auc(model, val, col=args.labels_value_column)
 		try:
 			roc_curve = model.evaluate(val, metric='roc_curve')
 			area=self.evaluator.custom_auc(roc_curve)
 		except:
 			pass
+		'''
 		results = model.evaluate(val)
 		try:
 			print 'Accuracy', results['accuracy']
