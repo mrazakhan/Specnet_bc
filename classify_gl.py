@@ -1,4 +1,5 @@
 import numpy as np
+import re
 import argparse
 import graphlab as gl
 import csv
@@ -75,8 +76,18 @@ class Eval():
 		logmp = p.apply(lambda x: (math.log(1-x)))
 		return -(target * logp + (1-target) * logmp).mean()
 
+	def calc_max_accuracy(self,labels, predictions_probs):
+		max_accuracy=0
+		predictions=[]
+		for thres in np.arange(0,1,0.01):
+			predictions=predictions_probs.apply(lambda x:0 if x<thres else 1)
+			acc=gl.evaluation.accuracy(labels, predictions)
+			if acc >max_accuracy:
+				max_accuracy=acc
+		return acc
+
 class spectral_training():
-	def __init__(self, clusteral_features, ground_truth, output_file, clusteral_key_col, labels_key_col, labels_value_col, interaction=0, join_type='inner',encode=False):
+	def __init__(self, clusteral_features, ground_truth, output_file, clusteral_key_col, labels_key_col, labels_value_col, interaction=0, join_type='inner',encode=False, baseline=False):
 		self.util=Util()
 		self.evaluator=Eval()	
 		self.clusteral_features=clusteral_features
@@ -88,6 +99,10 @@ class spectral_training():
 		self.interaction=interaction
 		self.join_type=join_type
 		self.encode=encode
+		self.baseline=baseline
+		self.max_iterations=30
+		if self.baseline==1:
+			self.max_iterations=120
 		
 
 	def preprocess(self):
@@ -117,19 +132,30 @@ class spectral_training():
 
 		print self.merged_sf[labels_value_col].sketch_summary()
 
-		interaction_columns=[each for each in cf.column_names() if labels_key_col not in each and clusteral_key_col not in each and labels_value_col not in each]
-		if DEBUG:
-			print 'Interaction.column_names()'
-			print interaction_columns
-			#sys.exit(0)
 		if interaction:
-			quad = fe.create(self.merged_sf, fe.QuadraticFeatures(features=interaction_columns))	
-			print 'Applying Quadratic Transformation'
-			self.merged_sf=quad.transform(self.merged_sf)
-			self.merged_sf.__materialize__()
-			#print 'Flattening the quadratic features'
-			#merged_sf=merged_sf.unpack('quadratic_features')
-		print 'Preprocessing complete'
+			if self.baseline==0:
+				regexp=re.compile('\d{2,}')
+				# Filtering out the spectal features with two digits in it. As the spectral digits are in reverse order of importance, so first of all I want to filter the feature with two or more digits then I want to reverse sort them	
+				ic_norm=[each for each in cf.column_names() if labels_key_col not in each and clusteral_key_col not in each and labels_value_col not in each and 'norm' in each]
+				ic_norm_in=sorted([each for each in ic_norm  if 'in' in each and re.search(regexp,each)], reverse=True)[:10]
+				ic_norm_out=sorted([each for each in ic_norm if 'out' in each and re.search(regexp,each)], reverse=True)[:10]
+				
+				ic_unnorm=[each for each in cf.column_names() if labels_key_col not in each and clusteral_key_col not in each and labels_value_col not in each and 'norm' not in each]
+				ic_unnorm_in=sorted([each for each in ic_unnorm  if 'in' in each and re.search(regexp,each)], reverse=True)[:10]
+				ic_unnorm_out=sorted([each for each in ic_unnorm if 'out' in each and re.search(regexp,each)],reverse=True)[:10]
+				
+				quad_norm = fe.create(self.merged_sf, fe.QuadraticFeatures(features=ic_norm_in+ic_norm_out))	
+				print 'Applying Quadratic Transformation on normalized'
+				self.merged_sf=quad_norm.transform(self.merged_sf)
+				quad_unnorm= fe.create(self.merged_sf, fe.QuadraticFeatures(features=ic_unnorm_in+ic_unnorm_out))
+				print 'Applying Quadratic Transformation on unnormalized columns'
+				self.merged_sf=quad_unnorm.transform(self.merged_sf)
+			else:
+				print 'Applying feature transformation in the case when the shape of the sf is low', self.merged_sf.shape
+				feats=[each for each in cf.column_names() if labels_key_col not in each and clusteral_key_col not     in each and labels_value_col not in each]
+				quad_transform = fe.create(self.merged_sf, fe.QuadraticFeatures(features=feats))
+				self.merged_sf=quad_transform.transform(self.merged_sf)
+			print 'Preprocessing complete'
 		#self.merged_sf=merged_sf
 
 
@@ -158,16 +184,20 @@ class spectral_training():
 		elif mode=='unbal':
 			train=self.train_unbal
 			val=self.val_unbal
+		train_matrix=train[train_features].to_numpy()
+		l2_penalty = np.sqrt(train_matrix.dot(train_matrix))
 		model = classifier.create(train, features=train_features, target=args.labels_value_column,\
-			l2_penalty=10,validation_set=val, max_iterations=30, convergence_threshold=0.005)#,metric='auc')
+			l2_penalty=1/float(l2_penalty),validation_set=val, 
+			max_iterations=30, convergence_threshold=0.005)#,metric='auc')
 		#model = gl.boosted_trees_classifier.create(train, features=train_features, target=args.labels_value_column,\
 		#        validation_set=val, metric='auc')
 		print "LL %0.20f" % self.evaluator.log_loss(model, val, col=args.labels_value_column)
 		predictions=model.predict(val)
-		print 'Predictions' , predictions.sketch_summary()
+		print 'Predictions min: {} , max {}'.format(min(predictions), max(predictions))
 		if max(predictions)>1 or min(predictions)<0:
 			scaler=MinMaxScaler()
 			predictions=gl.SArray(scaler.fit_transform(predictions), float)
+			print 'Post Transform Predictions min: {} , max {}'.format(min(predictions), max(predictions))
 		auc = gl.evaluation.auc(val[args.labels_value_column],predictions)
 		print "AUC %0.20f" %auc
 		'''
@@ -181,9 +211,11 @@ class spectral_training():
 		results = model.evaluate(val)
 		try:
 			print 'Accuracy', results['accuracy']
+			print 'Max Accuracy', self.evaluator.calc_max_accuracy(val[args.labels_value_column],predictions)
 		except:
 
 			print 'Accuracy', results
+			print 'Max Accuracy', self.evaluator.calc_max_accuracy(val[args.labels_value_column],model.predict(val))
 			pass
 		print 'Class Percentages in the validation data', val[args.labels_value_column].sketch_summary()
 		print 'Class Percentages in the training data', train[args.labels_value_column].sketch_summary()
@@ -247,23 +279,28 @@ if __name__=='__main__':
 	parser.add_argument('-j','--join_type', required=False)
 	parser.add_argument('-e','--encode', required=False)
 	parser.add_argument('-ex','--exclude', required=False)
+	parser.add_argument('-b','--baseline', required=False)
 
 	args=parser.parse_args()
 	
 
 	join_type='inner'
 	encode=False
+	baseline=False
 	if args.join_type is not None:
 		join_type=args.join_type
 	if args.encode is not None:
 		if args.encode=='1':
 			encode=True
+	if args.baseline is not None:
+		if args.baseline=='1':
+			baseline=True
 
 	print args
 
 	interaction=int(args.interaction)
 
-	trainer=spectral_training(args.clusteral_features, args.labels_file, args.output_file, args.clusteral_key_column, args.labels_key_column, args.labels_value_column, interaction=0, join_type='inner',encode=False)
+	trainer=spectral_training(args.clusteral_features, args.labels_file, args.output_file, args.clusteral_key_column, args.labels_key_column, args.labels_value_column, interaction=0, join_type='inner',encode=False,baseline=baseline)
 
 	trainer.run()	
 	
