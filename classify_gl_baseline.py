@@ -61,7 +61,7 @@ if __name__=='__main__':
 
 	interaction=int(args.interaction)
 
-	trainer=SpectralTraining(args.clusteral_features, args.labels_file, args.output_file, args.clusteral_key_column, args.labels_key_column, args.labels_value_column, interaction=0, join_type='inner',encode=False,baseline=baseline,exclude=args.exclude, normalization=normalization)
+	trainer=SpectralTraining(args.clusteral_features, args.labels_file, args.output_file, args.clusteral_key_column, args.labels_key_column, args.labels_value_column, interaction=0, join_type='inner',encode=False,baseline=baseline, normalization=normalization)
 
 	trainer.run()	
 	
